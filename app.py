@@ -5,6 +5,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import pickle
+import os
 
 # Page config
 st.set_page_config(page_title="Truck Forecast Dashboard", layout="wide")
@@ -86,6 +87,17 @@ def extend_future_to_2026(df_train, df_future):
 # Modify the load_data function (around line 20-30)
 @st.cache_data
 def load_data():
+    """Load training and future data from Excel files and extend to 2026"""
+    
+    
+    # Debug: Print current directory and files
+    st.write("Current directory:", os.getcwd())
+    st.write("Files in current directory:", os.listdir())
+    st.write("Looking for df_train_streamlit.xlsx:", os.path.exists("df_train_streamlit.xlsx"))
+    st.write("Looking for X_future_streamlit.xlsx:", os.path.exists("X_future_streamlit.xlsx"))
+    
+    df_train = pd.read_excel("df_train_streamlit.xlsx")
+    df_future = pd.read_excel("X_future_streamlit.xlsx")
     """Load training and future data from Excel files and extend to 2026"""
     df_train = pd.read_excel("df_train_streamlit.xlsx")
     df_future = pd.read_excel("X_future_streamlit.xlsx")
