@@ -12,10 +12,81 @@ st.set_page_config(page_title="Truck Forecast Dashboard", layout="wide")
 st.title("🚚 Truck Forecast - What-If Scenarios")
 st.markdown("Compare different business scenarios and their impact on truck requirements")
 
+
+# Add this function after your other helper functions (around line 50-100)
+def extend_future_to_2026(df_train, df_future):
+    """
+    Extend df_future to include all 52 weeks of 2026.
+    Ensures the extended data has the same structure as original df_future.
+    """
+    # First, check which columns were in the original df_future
+    original_columns = df_future.columns.tolist()
+    
+    # Determine the last week in df_future
+    if 'Year Hiérarchie - Year' in df_future.columns and 'Year Hiérarchie - Week' in df_future.columns:
+        last_year = df_future['Year Hiérarchie - Year'].max()
+        last_week = df_future['Year Hiérarchie - Week'].max()
+    else:
+        # If these columns don't exist in df_future, don't add them to 2026 either
+        last_year = 2025
+        last_week = 52
+    
+    print(f"Last data point: Year {last_year}, Week {last_week}")
+    
+    # 1. Create all 52 weeks of 2026
+    weeks_2026 = []
+    for week in range(1, 53):  # Weeks 1-52
+        week_data = {}
+        
+        # Only add year/week columns if they existed in original df_future
+        if 'Year Hiérarchie - Year' in original_columns:
+            week_data['Year Hiérarchie - Year'] = 2026
+        if 'Year Hiérarchie - Week' in original_columns:
+            week_data['Year Hiérarchie - Week'] = week
+        if 'weekNumbr' in original_columns:
+            week_data['weekNumbr'] = week
+        if 'Year Hiérarchie - Month' in original_columns:
+            week_data['Year Hiérarchie - Month'] = (week - 1) // 4 + 1
+        if 'Year Hiérarchie - Quarter' in original_columns:
+            week_data['Year Hiérarchie - Quarter'] = (week - 1) // 13 + 1
+        
+        weeks_2026.append(week_data)
+    
+    df_2026 = pd.DataFrame(weeks_2026)
+    
+    # 2. Add all other columns from df_future with default values
+    for col in original_columns:
+        if col not in df_2026.columns:
+            # Check the data type and initialize appropriately
+            if df_future[col].dtype in ['float64', 'int64']:
+                # For numeric columns, use the mean of the last few rows as default
+                df_2026[col] = df_future[col].tail(5).mean()
+            elif df_future[col].dtype == 'object':
+                df_2026[col] = df_future[col].mode()[0] if len(df_future[col].mode()) > 0 else None
+            else:
+                df_2026[col] = None
+    
+    # 3. Ensure column order matches original df_future
+    df_2026 = df_2026[original_columns]
+    
+    # 4. Combine: df_future (remaining 2025 weeks) + df_2026 (all 52 weeks of 2026)
+    df_extended_future = pd.concat([df_future, df_2026], ignore_index=True)
+    
+    print(f"\n✅ Extended future data:")
+    print(f"  Total weeks: {len(df_extended_future)}")
+    if 'Year Hiérarchie - Year' in df_extended_future.columns:
+        print(f"  2025 weeks: {len(df_extended_future[df_extended_future['Year Hiérarchie - Year'] == 2025])}")
+        print(f"  2026 weeks: {len(df_extended_future[df_extended_future['Year Hiérarchie - Year'] == 2026])}")
+    print(f"  Columns match original: {list(df_extended_future.columns) == original_columns}")
+    
+    return df_extended_future
+
 # Load data function
+
+# Modify the load_data function (around line 20-30)
 @st.cache_data
 def load_data():
-    """Load training and future data from Excel files"""
+    """Load training and future data from Excel files and extend to 2026"""
     df_train = pd.read_excel("df_train_streamlit.xlsx")
     df_future = pd.read_excel("X_future_streamlit.xlsx")
     
@@ -25,8 +96,100 @@ def load_data():
     if 'Unnamed: 0' in df_train.columns:
         df_train = df_train.drop(columns=['Unnamed: 0'])
     
-    return df_train, df_future
+    # Extend to include 2026
+    df_future_extended = extend_future_to_2026(df_train, df_future)
+    
+    return df_train, df_future_extended
 
+
+# Add a new function to create 2026 predictions visualization
+def plot_2026_predictions(all_scenarios, forecast_start_week, colors=None):
+    """
+    Create visualization specifically for 2026 predictions.
+    """
+    from plotly.subplots import make_subplots
+    import plotly.graph_objects as go
+    
+    hubs = ["Boisbriand", "Châteauguay", "Varennes"]
+    
+    if colors is None:
+        colors = get_scenario_colors(all_scenarios)
+    
+    # Filter to only 2026 data
+    # Assuming forecast data includes year info or we can calculate it
+    num_forecast_weeks = len(next(iter(all_scenarios.values()))['Boisbriand'])
+    
+    # Create subplots
+    fig = make_subplots(
+        rows=3, cols=1,
+        subplot_titles=[f'{hub} - 2026 Predictions' for hub in hubs],
+        vertical_spacing=0.12
+    )
+    
+    for idx, hub in enumerate(hubs):
+        row = idx + 1
+        
+        # For each scenario, plot 2026 weeks
+        for scenario_name, scenario_data in all_scenarios.items():
+            forecast = scenario_data[hub]
+            
+            # Assuming weeks beyond a certain point are 2026
+            # You'll need to identify which indices correspond to 2026
+            # This is a placeholder - adjust based on your data structure
+            weeks_2026 = list(range(1, 53))
+            
+            # Get 2026 portion of forecast
+            # This assumes the last 52 weeks of your forecast are 2026
+            if len(forecast) >= 52:
+                forecast_2026 = forecast[-52:]
+            else:
+                forecast_2026 = forecast
+                weeks_2026 = list(range(1, len(forecast) + 1))
+            
+            if scenario_name == 'Base Forecast':
+                fig.add_trace(
+                    go.Scatter(
+                        x=weeks_2026,
+                        y=forecast_2026,
+                        mode='lines+markers',
+                        name=scenario_name,
+                        line=dict(color=colors[scenario_name], width=2.5),
+                        marker=dict(size=6),
+                        hovertemplate=f'<b>{scenario_name}</b><br>Week: %{{x}}<br>Trucks: %{{y:.2f}}<extra></extra>',
+                        legendgroup=scenario_name,
+                        showlegend=(idx == 0)
+                    ),
+                    row=row, col=1
+                )
+            else:
+                fig.add_trace(
+                    go.Scatter(
+                        x=weeks_2026,
+                        y=forecast_2026,
+                        mode='lines+markers',
+                        name=scenario_name,
+                        line=dict(color=colors[scenario_name], width=2, dash='dash'),
+                        marker=dict(size=5, symbol='square'),
+                        hovertemplate=f'<b>{scenario_name}</b><br>Week: %{{x}}<br>Trucks: %{{y:.2f}}<extra></extra>',
+                        legendgroup=scenario_name,
+                        showlegend=(idx == 0)
+                    ),
+                    row=row, col=1
+                )
+        
+        # Update axes
+        fig.update_xaxes(title_text='Week Number (2026)', range=[0, 53], row=row, col=1)
+        fig.update_yaxes(title_text='Number of Trucks', row=row, col=1)
+    
+    fig.update_layout(
+        height=1200,
+        hovermode='closest',
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=-0.15, xanchor="left", x=0),
+        title_text="2026 Truck Predictions"
+    )
+    
+    return fig
 # Load models function
 @st.cache_resource
 def load_models():
@@ -168,7 +331,6 @@ def create_whatif_scenarios(df_train, X_future, models, elasticities):
     return all_scenarios, historical_2024, actual_2025, forecast_start_week
 
 
-
 def create_dynamic_scenarios_ui():
     """
     Create a UI for users to define custom scenarios with sliders.
@@ -201,67 +363,51 @@ def create_dynamic_scenarios_ui():
         cols_row2 = st.columns(max(num_custom_scenarios - 3, 0)) if num_custom_scenarios > 3 else []
         cols = list(cols_row1) + list(cols_row2)
     
-    used_names = set(['Base Forecast'])  # Track used names to ensure uniqueness
-    
     for i in range(num_custom_scenarios):
         with cols[i]:
             st.markdown(f"**Scenario {i+1}**")
             
-            # Scenario name with uniqueness check
-            default_name = f"Scenario {i+1}"
+            # Scenario name
             scenario_name = st.text_input(
                 f"Name", 
-                value=default_name,
+                value=f"Scenario {i+1}",
                 key=f"scenario_name_{i}"
             )
             
-            # Ensure unique scenario names
-            original_name = scenario_name
-            counter = 1
-            while scenario_name in used_names:
-                scenario_name = f"{original_name} ({counter})"
-                counter += 1
-            
-            used_names.add(scenario_name)
-            
-            # Show warning if name was changed
-            if scenario_name != original_name:
-                st.warning(f"⚠️ Name changed to '{scenario_name}' to ensure uniqueness")
-            
-            # Sales change slider
-            sales_change = st.slider(
+            # Sales change input
+            sales_change = st.number_input(
                 "Sales Change (%)",
-                min_value=-50,
-                max_value=50,
-                value=0,
-                step=5,
+                min_value=-100.0,
+                max_value=200.0,
+                value=0.0,
+                step=1.0,
                 key=f"sales_{i}",
-                help="Percentage change in sales volume"
+                help="Percentage change in sales volume (can be negative or positive)"
             )
             
-            # Transactions change slider
-            transactions_change = st.slider(
+            # Transactions change input
+            transactions_change = st.number_input(
                 "Transactions Change (%)",
-                min_value=-50,
-                max_value=50,
-                value=0,
-                step=5,
+                min_value=-100.0,
+                max_value=200.0,
+                value=0.0,
+                step=1.0,
                 key=f"transactions_{i}",
-                help="Percentage change in transaction volume"
+                help="Percentage change in transaction volume (can be negative or positive)"
             )
             
-            # Outbound change slider
-            outbound_change = st.slider(
+            # Outbound change input
+            outbound_change = st.number_input(
                 "Outbound Change (%)",
-                min_value=-50,
-                max_value=50,
-                value=0,
-                step=5,
+                min_value=-100.0,
+                max_value=200.0,
+                value=0.0,
+                step=1.0,
                 key=f"outbound_{i}",
-                help="Percentage change in outbound units"
+                help="Percentage change in outbound units (can be negative or positive)"
             )
             
-            # Add to scenarios dictionary with unique name
+            # Add to scenarios dictionary
             scenarios[scenario_name] = {
                 'sales': sales_change,
                 'transactions': transactions_change,
@@ -352,13 +498,30 @@ def create_dynamic_whatif_scenarios(df_train, X_future, models, elasticities, sc
         else:
             # Otherwise, make new predictions
             model = models[hub]
+            
             # Prepare X_future for prediction (remove pred columns if they exist)
             X_pred = X_future.drop(columns=[c for c in X_future.columns if c.startswith('pred_')], errors='ignore')
+            
+            # CRITICAL: Remove the year/quarter/month/week columns that weren't in training
+            cols_to_drop = [
+                'Year Hiérarchie - Year', 
+                'Year Hiérarchie - Quarter', 
+                'Year Hiérarchie - Month', 
+                'Year Hiérarchie - Week',
+                  # Add this if it exists
+            ]
+            X_pred = X_pred.drop(columns=[c for c in cols_to_drop if c in X_pred.columns], errors='ignore')
+            
+            # Also drop datetime columns
+            datetime_cols = X_pred.select_dtypes(include=['datetime64']).columns
+            if len(datetime_cols) > 0:
+                X_pred = X_pred.drop(columns=datetime_cols)
+            
             base_forecast = model.predict(X_pred)
         
         for scenario_name, changes in scenarios.items():
             # Import the apply_whatif_scenario function here or ensure it's available
-             # Replace with actual import
+              # Replace with actual import
             
             adjusted_forecast, truck_change = apply_whatif_scenario(
                 base_forecast, elasticities, hub,
@@ -399,7 +562,6 @@ def get_scenario_colors(scenarios):
             color_idx += 1
     
     return colors
-
 
 from scipy import stats
 import numpy as np
@@ -649,7 +811,7 @@ def plot_scenarios_with_ci(all_scenarios, intervals, historical_2024=None,
         height=1200,
         hovermode='closest',
         showlegend=True,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        legend=dict(orientation="h", yanchor="bottom", y=-0.15, xanchor="left", x=0)
     )
     
     return fig
@@ -803,7 +965,7 @@ def plot_scenarios(all_scenarios, historical_2024=None, actual_2025=None, foreca
         height=1200,
         hovermode='closest',
         showlegend=True,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        legend=dict(orientation="h", yanchor="bottom", y=-0.15, xanchor="left", x=0)
     )
     
     return fig
@@ -862,7 +1024,13 @@ def plot_scenarios_combined(all_scenarios, intervals, historical_2024=None,
                 hovertemplate='<b>2024 Actual Total</b><br>Week: %{x}<br>Trucks: %{y:.1f}<extra></extra>'
             )
         )
-    
+        
+        fig.update_layout(
+                height=1200,
+                hovermode='closest',
+                showlegend=True,
+                legend=dict(orientation="h", yanchor="bottom", y=-0.15, xanchor="left", x=0)
+            )
     # Aggregate 2025 actual data across all hubs
     if actual_2025:
         # Find the common weeks that exist across all hubs
@@ -984,10 +1152,10 @@ def plot_scenarios_combined(all_scenarios, intervals, historical_2024=None,
         showlegend=True,
         legend=dict(
             orientation="v",
-            yanchor="top",
-            y=0.99,
-            xanchor="right",
-            x=0.99,
+            yanchor="bottom",
+            y=0.02,
+            xanchor="left",
+            x=0.02,
             bgcolor="rgba(255, 255, 255, 0.8)",
             bordercolor="gray",
             borderwidth=1
@@ -1284,7 +1452,7 @@ def create_yoy_comparison(df_train, df_future, models):
         height=1400,
         hovermode='closest',
         showlegend=True,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        legend=dict(orientation="h", yanchor="bottom", y=-0.15, xanchor="left", x=0)
     )
     
     # Create comparison DataFrame
@@ -1629,10 +1797,10 @@ def create_capacity_visualization(all_scenarios, historical_2024, actual_2025, f
         showlegend=True,
         legend=dict(
             orientation="v",
-            yanchor="top",
-            y=0.99,
-            xanchor="right",
-            x=0.99,
+            yanchor="bottom",
+            y=0.02,
+            xanchor="left",
+            x=0.02,
             bgcolor="rgba(255, 255, 255, 0.8)",
             bordercolor="gray",
             borderwidth=1
@@ -1647,6 +1815,301 @@ def create_capacity_visualization(all_scenarios, historical_2024, actual_2025, f
     fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='lightgray')
     
     return fig
+
+
+
+
+def calculate_net_profitability(scenarios, df_rental_costs, base_cost):
+    """
+    Calculate net profitability considering both revenue changes and rental costs.
+    
+    Parameters:
+    - scenarios: dict with scenario definitions (sales/transactions/outbound changes)
+    - df_rental_costs: DataFrame with rental cost analysis
+    - base_cost: base forecast rental cost (numeric)
+    
+    Returns:
+    - DataFrame with profitability analysis
+    """
+    
+    # You can adjust these assumptions based on your business
+    # Default values - can be made into input parameters
+    avg_transaction_value = 150  # Average $ per transaction
+    profit_margin = 0.25  # 25% profit margin on sales
+    weeks_per_year = 52
+    
+    profitability_data = []
+    
+    for _, cost_row in df_rental_costs.iterrows():
+        scenario_name = cost_row['Scenario']
+        
+        if scenario_name == 'Base Forecast':
+            # Base forecast has no changes
+            profitability_data.append({
+                'Scenario': scenario_name,
+                'Revenue Impact': '$0',
+                'Rental Cost Impact': '$0',
+                'Net Impact': '$0',
+                'Profitable?': '—'
+            })
+            continue
+        
+        # Get scenario changes
+        scenario_changes = scenarios[scenario_name]
+        sales_change_pct = scenario_changes['sales']
+        transactions_change_pct = scenario_changes['transactions']
+        
+        # Calculate revenue impact
+        # Assuming sales change directly impacts revenue
+        # You would need to provide actual annual sales figure here
+        # For now, we'll estimate based on transactions
+        
+        # Estimate annual transactions (this is a placeholder - adjust to your data)
+        # You might want to calculate this from df_train historical data
+        estimated_annual_transactions = 50000  # Placeholder - adjust this!
+        
+        # Revenue impact from sales change
+        revenue_from_sales_change = (estimated_annual_transactions * avg_transaction_value * 
+                                     (sales_change_pct / 100) * profit_margin)
+        
+        # Revenue impact from transaction volume change
+        revenue_from_transaction_change = (estimated_annual_transactions * avg_transaction_value * 
+                                           (transactions_change_pct / 100) * profit_margin)
+        
+        # Total revenue impact (profit, not just revenue)
+        total_revenue_impact = revenue_from_sales_change + revenue_from_transaction_change
+        
+        # Rental cost impact
+        scenario_cost = cost_row['Cost (numeric)']
+        rental_cost_impact = scenario_cost - base_cost
+        
+        # Net impact = Revenue gain - Additional rental costs
+        net_impact = total_revenue_impact - rental_cost_impact
+        
+        # Determine if profitable
+        if net_impact > 0:
+            profitable = '✅ Yes'
+        elif net_impact < 0:
+            profitable = '❌ No'
+        else:
+            profitable = '➖ Break Even'
+        
+        profitability_data.append({
+            'Scenario': scenario_name,
+            'Revenue Impact': f'${total_revenue_impact:+,.0f}',
+            'Rental Cost Impact': f'${rental_cost_impact:+,.0f}',
+            'Net Impact': f'${net_impact:+,.0f}',
+            'Profitable?': profitable,
+            'Net Impact (numeric)': net_impact  # For sorting
+        })
+    
+    df_profitability = pd.DataFrame(profitability_data)
+    return df_profitability
+
+def calculate_net_profitability_from_ly_sales(scenarios, df_rental_costs, base_cost, df_future):
+    """
+    Calculate net profitability using LY SALES from df_future (forecast period only).
+    Compares revenue change vs rental cost change for the same time period.
+    
+    Parameters:
+    - scenarios: dict with scenario definitions
+    - df_rental_costs: DataFrame with rental cost analysis
+    - base_cost: base forecast rental cost (numeric)
+    - df_future: future dataframe with LY SALES column
+    
+    Returns:
+    - DataFrame with profitability analysis
+    """
+    
+    # Calculate baseline sales from LY SALES for the forecast period
+    if 'LY SALES' in df_future.columns:
+        # Sum of last year's sales for the forecast period weeks
+        baseline_forecast_period_sales = df_future['LY SALES'].sum()
+    else:
+        baseline_forecast_period_sales = 0
+        st.warning("⚠️ LY SALES column not found in future data. Revenue calculation unavailable.")
+    
+    profitability_data = []
+    
+    for _, cost_row in df_rental_costs.iterrows():
+        scenario_name = cost_row['Scenario']
+        
+        if scenario_name == 'Base Forecast':
+            profitability_data.append({
+                'Scenario': scenario_name,
+                'Revenue Change': '$0',
+                'Rental Cost Change': '$0',
+                'Net Impact': '$0',
+                'Worth It?': '—'
+            })
+            continue
+        
+        # Get scenario changes
+        scenario_changes = scenarios[scenario_name]
+        sales_change_pct = scenario_changes['sales']
+        
+        # Calculate revenue change from sales % change
+        # New sales = LY SALES × (1 + sales_change_pct)
+        # Revenue change = New sales - LY SALES = LY SALES × sales_change_pct
+        revenue_change = baseline_forecast_period_sales * (sales_change_pct / 100)
+        
+        # Rental cost impact (already calculated for the forecast period)
+        scenario_cost = cost_row['Cost (numeric)']
+        rental_cost_change = scenario_cost - base_cost
+        
+        # Net impact = Revenue change - Rental cost change
+        net_impact = revenue_change - rental_cost_change
+        
+        # Determine if worth it
+        if net_impact > 1000:  # Buffer for rounding
+            worth_it = '✅ Yes'
+            worth_it_icon = '✅'
+        elif net_impact < -1000:
+            worth_it = '❌ No'
+            worth_it_icon = '❌'
+        else:
+            worth_it = '➖ Break Even'
+            worth_it_icon = '➖'
+        
+        profitability_data.append({
+            'Scenario': scenario_name,
+            'Revenue Change': f'${revenue_change:+,.0f}',
+            'Rental Cost Change': f'${rental_cost_change:+,.0f}',
+            'Net Impact': f'${net_impact:+,.0f}',
+            'Worth It?': worth_it,
+            'Icon': worth_it_icon,
+            'Net Impact (numeric)': net_impact
+        })
+    
+    df_profitability = pd.DataFrame(profitability_data)
+    
+    # Sort by net impact (best to worst)
+    if 'Net Impact (numeric)' in df_profitability.columns:
+        df_profitability = df_profitability.sort_values('Net Impact (numeric)', ascending=False)
+    
+    return df_profitability, baseline_forecast_period_sales
+
+
+def calculate_net_profitability_with_inputs(scenarios, df_rental_costs, base_cost, 
+                                            df_train, profit_margin):
+    """
+    Calculate net profitability using actual sales data from df_train.
+    
+    Parameters:
+    - scenarios: dict with scenario definitions
+    - df_rental_costs: DataFrame with rental cost analysis
+    - base_cost: base forecast rental cost (numeric)
+    - df_train: training dataframe with actual sales data
+    - profit_margin: profit margin as decimal (e.g., 0.25 for 25%)
+    
+    Returns:
+    - DataFrame with profitability analysis
+    """
+    
+    # Calculate baseline annual sales from actual data
+    # Use data from the forecast period weeks (weeks that will be forecasted in 2025)
+    if 'ACTUAL SALES' in df_train.columns:
+        # Get the most recent year of data as baseline
+        if 'Year Hiérarchie - Year' in df_train.columns:
+            latest_year = df_train['Year Hiérarchie - Year'].max()
+            recent_data = df_train[df_train['Year Hiérarchie - Year'] == latest_year]
+        else:
+            # Use last 52 weeks
+            recent_data = df_train.tail(52)
+        
+        # Calculate weekly average sales
+        weekly_avg_sales = recent_data['ACTUAL SALES'].mean()
+        
+        # Estimate annual sales (52 weeks)
+        baseline_annual_sales = weekly_avg_sales * 52
+    else:
+        # Fallback if ACTUAL SALES column doesn't exist
+        baseline_annual_sales = 0
+        st.warning("⚠️ ACTUAL SALES column not found in data. Profitability calculation may be inaccurate.")
+    
+    profitability_data = []
+    
+    for _, cost_row in df_rental_costs.iterrows():
+        scenario_name = cost_row['Scenario']
+        
+        if scenario_name == 'Base Forecast':
+            profitability_data.append({
+                'Scenario': scenario_name,
+                'Revenue Impact': '$0',
+                'Rental Cost Impact': '$0',
+                'Net Impact': '$0',
+                'Profitable?': '—',
+                'ROI': '—'
+            })
+            continue
+        
+        # Get scenario changes
+        scenario_changes = scenarios[scenario_name]
+        sales_change_pct = scenario_changes['sales']
+        transactions_change_pct = scenario_changes['transactions']
+        
+        # Calculate revenue impact using actual sales data
+        # Sales % change directly affects revenue
+        # Transactions % change affects volume (which also affects revenue)
+        
+        # Method: Combined multiplicative effect
+        # If sales +10% (price/mix) and transactions +10% (volume)
+        # Total revenue impact = baseline * (1 + sales%) * (1 + transactions%)
+        
+        sales_multiplier = 1 + (sales_change_pct / 100)
+        transaction_multiplier = 1 + (transactions_change_pct / 100)
+        
+        # Calculate base annual profit
+        base_annual_profit = baseline_annual_sales * profit_margin
+        
+        # Calculate new annual sales with scenario changes
+        new_annual_sales = baseline_annual_sales * sales_multiplier * transaction_multiplier
+        
+        # Calculate new annual profit
+        new_annual_profit = new_annual_sales * profit_margin
+        
+        # Revenue impact (additional profit)
+        total_revenue_impact = new_annual_profit - base_annual_profit
+        
+        # Rental cost impact
+        scenario_cost = cost_row['Cost (numeric)']
+        rental_cost_impact = scenario_cost - base_cost
+        
+        # Net impact = Additional profit - Additional rental costs
+        net_impact = total_revenue_impact - rental_cost_impact
+        
+        # Calculate ROI
+        if rental_cost_impact != 0:
+            roi = (net_impact / abs(rental_cost_impact)) * 100
+            roi_str = f'{roi:+.1f}%'
+        else:
+            roi_str = '∞' if net_impact > 0 else '—'
+        
+        # Determine if profitable
+        if net_impact > 1000:  # Buffer for rounding
+            profitable = '✅ Profitable'
+        elif net_impact < -1000:
+            profitable = '❌ Not Profitable'
+        else:
+            profitable = '➖ Break Even'
+        
+        profitability_data.append({
+            'Scenario': scenario_name,
+            'Revenue Impact': f'${total_revenue_impact:+,.0f}',
+            'Rental Cost Impact': f'${rental_cost_impact:+,.0f}',
+            'Net Impact': f'${net_impact:+,.0f}',
+            'ROI': roi_str,
+            'Profitable?': profitable,
+            'Net Impact (numeric)': net_impact
+        })
+    
+    df_profitability = pd.DataFrame(profitability_data)
+    
+    # Sort by net impact (best to worst)
+    if 'Net Impact (numeric)' in df_profitability.columns:
+        df_profitability = df_profitability.sort_values('Net Impact (numeric)', ascending=False)
+    
+    return df_profitability
 
 
 # Main app logic
@@ -1667,7 +2130,8 @@ try:
             st.metric("Future Forecast Weeks", len(df_future))
     
     # Add tabs for different analyses
-    tab1, tab2 = st.tabs(["📈 What-If Scenarios", "📅 Year-over-Year Comparison"])
+    tab1, tab2, tab3 = st.tabs(["📈 What-If Scenarios", "📅 Year-over-Year Comparison", "🔮 2026 Predictions"])
+
     
     with tab1:
             # NEW: Add scenario builder UI BEFORE the button
@@ -1867,7 +2331,133 @@ try:
                             st.info("💡 Consider optimizing operations or adjusting business strategies to reduce weeks over capacity and minimize rental costs.")
 
                     # ============ END RENTAL COST ANALYSIS ============
+                    
+                    
+                                    # ============ NET PROFITABILITY ANALYSIS ============
+                    st.markdown("---")
+                    st.header("💰 Revenue vs Cost Analysis")
+                    st.markdown("""
+                    This analysis answers: **"Is the additional revenue from sales growth worth the extra truck rental costs?"**
 
+                    **Methodology:**
+                    - **Revenue Change**: Calculated from LY SALES (last year's sales for the forecast period) × Sales % change
+                    - **Rental Cost Change**: Additional truck rental costs for the forecast period
+                    - **Net Impact**: Revenue Change - Rental Cost Change
+                    """)
+
+                    # Show baseline sales information
+                    if 'LY SALES' in df_future.columns:
+                        baseline_ly_sales = df_future['LY SALES'].sum()
+                        num_forecast_weeks = len(df_future)
+                        
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Forecast Period", f"{num_forecast_weeks} weeks")
+                        with col2:
+                            st.metric("LY Sales (Forecast Period)", f"${baseline_ly_sales:,.0f}")
+                        with col3:
+                            st.metric("Weekly Avg (LY)", f"${baseline_ly_sales/num_forecast_weeks:,.0f}")
+                    else:
+                        st.warning("⚠️ LY SALES column not found in future data. Revenue analysis unavailable.")
+                        baseline_ly_sales = 0
+
+                    # Calculate profitability using LY SALES
+                    df_profitability, baseline_sales = calculate_net_profitability_from_ly_sales(
+                        scenarios, df_rental_costs, base_cost, df_future
+                    )
+
+                    # Display profitability analysis
+                    st.subheader("📊 Scenario Comparison")
+                    st.markdown("""
+                    **How to read this table:**
+                    - **Revenue Change**: How much more/less revenue from sales % change (based on LY SALES)
+                    - **Rental Cost Change**: How much more/less spent on truck rentals
+                    - **Net Impact**: Revenue Change - Rental Cost Change
+                    - **Worth It?**: ✅ = Revenue gain exceeds costs | ❌ = Costs exceed revenue gain
+                    """)
+
+                    # Display the dataframe
+                    display_profitability = df_profitability.drop(columns=['Net Impact (numeric)', 'Icon'], errors='ignore')
+                    st.dataframe(display_profitability, use_container_width=True)
+
+                    # Show calculation example for transparency
+                    with st.expander("📖 Example Calculation"):
+                        st.markdown(f"""
+                        **Example for a scenario with +15% Sales:**
+                        
+                        1. **LY Sales (Forecast Period)**: ${baseline_sales:,.0f}
+                        2. **New Sales with +15%**: ${baseline_sales:,.0f} × 1.15 = ${baseline_sales * 1.15:,.0f}
+                        3. **Revenue Change**: ${baseline_sales * 1.15:,.0f} - ${baseline_sales:,.0f} = **${baseline_sales * 0.15:,.0f}**
+                        4. **Rental Cost Change**: (Calculated from truck needs above/below 48 capacity)
+                        5. **Net Impact**: Revenue Change - Rental Cost Change
+                        
+                        **Decision:** If Net Impact is positive (✅), the sales growth more than pays for the extra trucks!
+                        """)
+
+                    # Show best and worst scenarios with icons
+                    st.subheader("🏆 Quick Summary")
+
+                    col1, col2 = st.columns(2)
+
+                    with col1:
+                        st.markdown("**💚 Best Financial Outcome:**")
+                        best_scenario = df_profitability.iloc[0] if len(df_profitability) > 1 else None
+                        if best_scenario is not None and best_scenario['Scenario'] != 'Base Forecast':
+                            icon = best_scenario.get('Icon', '✅')
+                            st.success(f"""
+                            {icon} **{best_scenario['Scenario']}**
+                            - Revenue Change: {best_scenario['Revenue Change']}
+                            - Rental Cost: {best_scenario['Rental Cost Change']}
+                            - **Net: {best_scenario['Net Impact']}**
+                            """)
+                        else:
+                            st.info("Base Forecast is the reference scenario")
+
+                    with col2:
+                        st.markdown("**⚠️ Worst Financial Outcome:**")
+                        worst_scenario = df_profitability.iloc[-1] if len(df_profitability) > 1 else None
+                        if worst_scenario is not None and worst_scenario['Scenario'] != 'Base Forecast':
+                            icon = worst_scenario.get('Icon', '❌')
+                            st.error(f"""
+                            {icon} **{worst_scenario['Scenario']}**
+                            - Revenue Change: {worst_scenario['Revenue Change']}
+                            - Rental Cost: {worst_scenario['Rental Cost Change']}
+                            - **Net: {worst_scenario['Net Impact']}**
+                            """)
+                        else:
+                            st.info("All scenarios have similar outcomes")
+
+                    # Show business insights
+                    st.markdown("---")
+                    st.subheader("💡 Key Insights")
+
+                    worth_it_scenarios = df_profitability[
+                        (df_profitability['Worth It?'] == '✅ Yes') & 
+                        (df_profitability['Scenario'] != 'Base Forecast')
+                    ]
+
+                    not_worth_it_scenarios = df_profitability[
+                        (df_profitability['Worth It?'] == '❌ No') & 
+                        (df_profitability['Scenario'] != 'Base Forecast')
+                    ]
+
+                    col1, col2 = st.columns(2)
+
+                    with col1:
+                        if len(worth_it_scenarios) > 0:
+                            st.success(f"✅ **{len(worth_it_scenarios)} scenario(s) are worth it**")
+                            st.markdown("Revenue gains exceed rental costs")
+                        else:
+                            st.info("No scenarios generate net positive revenue")
+
+                    with col2:
+                        if len(not_worth_it_scenarios) > 0:
+                            st.error(f"❌ **{len(not_worth_it_scenarios)} scenario(s) are not worth it**")
+                            st.markdown("Rental costs exceed revenue gains")
+                        else:
+                            st.success("All scenarios are financially viable")
+
+                    # ============ END NET PROFITABILITY ANALYSIS ============
                     # NEW: Show confidence interval statistics
                     with st.expander("📊 Confidence Interval Statistics (95%)"):
                         for hub in ["Boisbriand", "Châteauguay", "Varennes"]:
@@ -1946,6 +2536,105 @@ try:
                         factor = adjustment_factors[hub]
                         pct_change = (factor - 1) * 100
                         st.markdown(f"**{hub}:** {factor:.4f} ({pct_change:+.2f}%)")
+                        
+    with tab3:
+        st.markdown("### 🔮 2026 Truck Demand Predictions")
+        st.markdown("View predictions for all 52 weeks of 2026 across different scenarios")
+        
+        if st.button("🚀 Generate 2026 Predictions", type="primary", key="predictions_2026"):
+            with st.spinner("Generating 2026 predictions..."):
+                try:
+                    # Calculate elasticity coefficients
+                    elasticities = calculate_elasticity_coefficients(df_train)
+                    
+                    # Calculate confidence intervals
+                    intervals = calculate_confidence_intervals(df_train, models, confidence_level=0.95)
+                    
+                    # Use default scenarios instead of UI (to avoid duplicate widgets)
+                    scenarios = {
+                        'Base Forecast': {'sales': 0, 'transactions': 0, 'outbound': 0},
+                        'Sales +10%': {'sales': 10, 'transactions': 0, 'outbound': 0},
+                        'Transactions +10%': {'sales': 0, 'transactions': 10, 'outbound': 0},
+                        'Sales +10% & Transactions +10%': {'sales': 10, 'transactions': 10, 'outbound': 0},
+                    }
+                    
+                    # Generate predictions for extended future (including 2026)
+                    all_scenarios, historical_2024, actual_2025, forecast_start_week = create_dynamic_whatif_scenarios(
+                        df_train, df_future, models, elasticities, scenarios
+                    )
+                    
+                    # Get colors
+                    colors = get_scenario_colors(scenarios)
+                    
+                    # Filter to 2026 only
+                    st.subheader("📊 2026 Predictions by Hub")
+                    
+                    # Display 2026 predictions plot
+                    fig_2026 = plot_2026_predictions(all_scenarios, forecast_start_week, colors)
+                    st.plotly_chart(fig_2026, use_container_width=True)
+                    
+                    # Create downloadable table of 2026 predictions
+                    st.subheader("📥 Download 2026 Predictions")
+                    
+                    # Build dataframe
+                    prediction_data = {'Week': list(range(1, 53))}
+                    
+                    for scenario_name, scenario_data in all_scenarios.items():
+                        for hub in ["Boisbriand", "Châteauguay", "Varennes"]:
+                            forecast = scenario_data[hub]
+                            # Get last 52 weeks (2026)
+                            if len(forecast) >= 52:
+                                forecast_2026 = forecast[-52:]
+                            else:
+                                forecast_2026 = list(forecast) + [0] * (52 - len(forecast))
+                            
+                            prediction_data[f'{hub}_{scenario_name}'] = forecast_2026
+                    
+                    df_2026_predictions = pd.DataFrame(prediction_data)
+                    
+                    # Display table
+                    st.dataframe(df_2026_predictions, use_container_width=True)
+                    
+                    # Download button
+                    csv = df_2026_predictions.to_csv(index=False)
+                    st.download_button(
+                        label="📥 Download 2026 Predictions as CSV",
+                        data=csv,
+                        file_name="2026_truck_predictions.csv",
+                        mime="text/csv"
+                    )
+                    
+                    # Also create a text file
+                    txt_content = "="*70 + "\n"
+                    txt_content += "TRUCK PREDICTIONS FOR 2026\n"
+                    txt_content += "="*70 + "\n\n"
+                    
+                    for hub in ["Boisbriand", "Châteauguay", "Varennes"]:
+                        txt_content += f"\n{hub}:\n"
+                        txt_content += "-"*50 + "\n"
+                        
+                        for scenario_name in scenarios.keys():
+                            txt_content += f"\n  {scenario_name}:\n"
+                            forecast = scenario_data[hub][-52:] if len(scenario_data[hub]) >= 52 else scenario_data[hub]
+                            
+                            for week, trucks in enumerate(forecast, 1):
+                                txt_content += f"    Week {week:2d}: {trucks:.1f} trucks\n"
+                    
+                    txt_content += "\n" + "="*70 + "\n"
+                    
+                    st.download_button(
+                        label="📥 Download 2026 Predictions as TXT",
+                        data=txt_content,
+                        file_name="2026_truck_predictions.txt",
+                        mime="text/plain"
+                    )
+                    
+                    st.success("✅ 2026 predictions generated successfully!")
+                    
+                except Exception as e:
+                    st.error(f"❌ An error occurred: {str(e)}")
+                    import traceback
+                    st.code(traceback.format_exc())
 
 except FileNotFoundError as e:
     st.error(f"❌ Error: Could not find required files. Make sure you have:")
